@@ -8,6 +8,8 @@ An AI-powered Twitch chat bot that uses local LLM (Language Learning Model) to i
 - Subscription event handling
 - Command support
 - Full Twitch integration with various channel read permissions
+- Chat history persistence with optional save/load functionality
+- Maximum history size of 100 messages for optimal performance
 
 ## Prerequisites
 
@@ -60,21 +62,97 @@ ollama pull llama3.2:3b
 
 ## Running the Bot
 
-1. Make sure you're logged out of your personal Twitch account in your browser
-2. Start the bot:
+### Basic Usage
 ```bash
 python main.py
 ```
-3. When prompted:
-   - Enter your Twitch application client ID
-   - Enter your Twitch application secret
-   - Enter the channel name where the bot should operate
-   - Enter the streamer's name (or leave blank to use channel name)
-4. When the browser opens:
-   - Log in with your bot's Twitch account
-   - Authorize the application with the requested permissions
 
-The bot will connect to the specified channel and start responding to chat messages.
+### Command Line Arguments
+```bash
+# Use all features
+python main.py --login credentials.json --history chat_logs/history --prompt custom_prompt.txt
+
+# Just custom prompt
+python main.py --prompt my_prompt.txt
+
+# Just saved credentials
+python main.py --login my_login.json
+```
+
+When you start the bot:
+1. Make sure you're logged out of your personal Twitch account in your browser
+2. You'll be prompted for credentials (if not using --login)
+3. A browser window will open for OAuth authentication
+   - Log in with your bot's Twitch account
+   - Authorize the application
+
+### Using Saved Credentials
+You can save your Twitch credentials in a JSON file to avoid entering them each time:
+
+```bash
+# Use saved credentials
+python main.py --login my_login.json
+```
+
+Create a JSON file with your credentials (see `login_template.json` for format):
+```json
+{
+    "app_id": "your_twitch_app_id_here",
+    "app_secret": "your_twitch_app_secret_here",
+    "channel_name": "your_channel_name_here",
+    "streamer_name": "streamer_name_here"  // Optional
+}
+```
+
+⚠️ **Important**: Login files are automatically added to `.gitignore` to prevent accidental commits. Never commit files containing your credentials!
+
+### Using Custom Prompts
+You can customize the bot's personality and behavior using a prompt template:
+
+```bash
+# Use custom prompt
+python main.py --prompt my_prompt.txt
+```
+
+The prompt template can include variables that are automatically updated:
+- `{streamer_name}` - The name of the streamer
+- `{game_playing}` - The current game being played
+
+See [docs/VARIABLES.md](docs/VARIABLES.md) for detailed information about available variables and their usage.
+
+Example templates are provided:
+- `prompt_template.txt` - Default bot personality
+- Create your own by copying and modifying the template
+
+### Using Chat History
+The bot maintains a rolling history of the last 100 messages, which can be optionally saved and loaded:
+
+```bash
+# Save history to a specific file
+python main.py --history chat_logs/stream_20240126
+
+# Load previous history and continue saving
+python main.py --history chat_logs/existing_history
+```
+
+Chat history features:
+- History is automatically truncated to 100 messages
+- Files are saved in JSON format (`.json` extension added automatically)
+- History is saved after each message
+- Previous history is loaded on startup if the file exists
+- Directory structure is created automatically
+
+## Development
+
+For information about developing, testing, and contributing to the bot, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+The development guide covers:
+- Project structure
+- Setting up a development environment
+- Running and writing tests
+- Common development tasks
+- Best practices
+- Troubleshooting
 
 ## Permissions
 
@@ -111,7 +189,7 @@ These credentials are handled securely:
 
 ## Stopping the Bot
 
-Press Ctrl+C in the terminal to gracefully shut down the bot.
+Press Ctrl+C in the terminal to gracefully shut down the bot. If chat history is enabled, it will be saved before exit.
 
 ## Troubleshooting
 
@@ -130,17 +208,23 @@ Press Ctrl+C in the terminal to gracefully shut down the bot.
 - Verify that the llama3.2:3b model is properly installed
 - Check Ollama logs for any errors
 
+### Chat History Issues
+- Ensure you have write permissions in the target directory
+- Check that the history file is valid JSON if loading existing history
+- Verify that the chat logs directory exists and is writable
+
 ## Contributing
 
 Feel free to submit issues and pull requests!
 
+# Todo List
+
+- [ ] Add logging for better error handling
+- [ ] Add exception handling for Ollama errors
+
 ## License
 
 This project is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
-
-This means you are free to:
-- Share and redistribute the material
-- Adapt and build upon the material
 
 Under these conditions:
 - **Attribution** - You must give credit to RaspberryPicardBox, provide a link to the license, and indicate if changes were made
