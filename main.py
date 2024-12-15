@@ -6,10 +6,13 @@ from twitchAPI.type import AuthScope
 from twitchAPI.oauth import UserAuthenticator
 from twitchAPI.eventsub.websocket import EventSubWebsocket
 from ollama import AsyncClient
+from duckduckgo_search import AsyncDDGS
 import json
 import os
 import argparse
+import re
 from datetime import datetime
+import multiprocessing
 
 class Bot:
     MAX_HISTORY_SIZE = 100  # Maximum number of messages to keep in history
@@ -23,6 +26,7 @@ class Bot:
                 self.app_secret = login_data.get('app_secret')
                 self.channel_name = login_data.get('channel_name')
                 self.streamer_name = login_data.get('streamer_name', self.channel_name)
+                self.bot_name = login_data.get('bot_name', 'SLM_Bot')
                 print("Loaded credentials from login file")
             except Exception as e:
                 print(f"Error loading login file: {e}")
@@ -99,19 +103,23 @@ class Bot:
     def _use_default_prompt(self):
         """Set the default system prompt."""
         self.prompt = f"""
-        You are SLM_Bot, a chatbot on a Twitch stream alongside your host.
+        You are {self.bot_name}, a chatbot on a Twitch stream alongside your host.
         You are a helpful assistant that chats with the stream chat, answers questions about the streamer's game, etc.
-        You should respond to recent messages in the chat history with your response content only. Do not respond with a timestamp, this is added automatically by Twitch!
+        You should respond to recent messages in the chat history with your response content only.
         Do not respond with anything other than your text reply.
+
         The streamer's name is {self.streamer_name}.
-        The current game is {self.game_playing}.
+        The current game is {self.game_playing}. If the stream is offline, feel free to chat still.
 
         Example Chat:
-            2024-01-26T15:30:45Z viewer123: Hello bot!
-            SLM_Bot: Hi there! Welcome to the stream! What game are you watching today?
-            2024-01-26T15:30:45Z viewer123: {self.streamer_name} is playing {self.game_playing} today.
+            viewer123: Hello bot!
+            {self.bot_name}: Hi there! Welcome to the stream! What game are you watching today?
+            viewer123: {self.streamer_name} is playing {self.game_playing} today.
 
-        Note how the bot only responds with 'SLM_Bot: ' at the beginning of its responses.
+        DO NOT use any tool calls unless necessary. ONLY use tool calls when a user specifically asks. DO NOT search the internet unecessarily.
+
+        The conversation history is as follows:
+        {self.chat_history}
         """
 
     async def on_ready(self, ready_event: EventData):
@@ -150,16 +158,98 @@ class Bot:
             except Exception as e:
                 print(f"Error saving chat history: {e}")
 
+    async def null_tool_call(self):
+        return ''
+
+    async def search_internet(self, query):
+        results = await AsyncDDGS().atext(query, max_results=3)
+        return results
+
+    async def get_current_time(self):
+        return datetime.now().isoformat()
+
+    def _get_available_tools(self):
+        return [
+            {
+                'type': 'function',
+                'function': {
+                    'name': 'respond_to_user',
+                    'description': 'Skips the tool call and sends a message to the user.',
+                    'parameters': {
+                        'type': 'object',
+                        'properties': {},
+                    },
+                    'required': []
+                }
+            },
+            {
+                'type': 'function',
+                'function': {
+                    'name': 'search_internet',
+                    'description': 'Search the internet using DuckDuckGo. Returns up to 3 results. To be used only when a chat user asks for an internet search.',
+                    'parameters': {
+                        'type': 'object',
+                        'properties': {
+                            'query': {
+                                'type': 'string',
+                                'description': 'The query to search for.'
+                            }
+                        },
+                    },
+                    'required': ['query']
+                }
+            },
+            {
+                'type': 'function',
+                'function': {
+                    'name': 'get_current_time',
+                    'description': 'Returns the current time in UTC. To be used only when a chat user asks for the current time.',
+                    'parameters': {
+                        'type': 'object',
+                        'properties': {},
+                    },
+                    'required': []
+                }
+            }
+        ]
+
+    async def _get_llm_response(self, llm_results):
+        # Get response from LLM
+        try:
+            response = await self.llm.chat(
+                model='llama3.2:3b-instruct-q4_0', 
+                messages=[{'role': 'system', 'content': self.prompt}] + self.chat_history,
+                tools = self._get_available_tools(),
+                options={
+                    'temperature': 0.2
+                }
+            )
+            response_text = response['message']['content']
+            try:
+                response_tools = response['message']['tool_calls']
+            except KeyError:
+                response_tools = []
+        except Exception as e:
+            print(f"Error connecting to LLM: {e}")
+            response_text = 'There was an error connecting to the LLM. Please try again later.'
+            response_tools = []
+
+        llm_results['response_text'] = response_text
+        llm_results['response_tools'] = response_tools
+        return response_text, response_tools
+
     async def on_message(self, msg: ChatMessage):
         """Called when a message is received in chat."""
 
-        if msg.text.startswith('?'):
+        if not msg.text.startswith('!ai'):
             return
+
+        msg.text = msg.text[4:].strip()
 
         # Add user message to chat history
         self.chat_history.append({
             'role': 'user', 
-            'content': f"{msg.sent_timestamp} {msg.user.name}: {msg.text}"
+            'content': f"{msg.user.name}: {msg.text}"
         })
         
         # Keep only the most recent messages
@@ -167,19 +257,75 @@ class Bot:
             self.chat_history = self.chat_history[-self.MAX_HISTORY_SIZE:]
 
         # Get response from LLM
-        response = await self.llm.chat(
-            model='llama3.2:3b', 
-            messages=[{'role': 'system', 'content': self.prompt}] + self.chat_history
-        )
-        response_text = response['message']['content']
+        def generate_response(llm_results):
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            response_text, response_tools = loop.run_until_complete(self._get_llm_response(llm_results))
+            llm_results['response_text'] = response_text
+            llm_results['response_tools'] = response_tools
 
+        llm_results = multiprocessing.Manager().dict()
+        response_process = multiprocessing.Process(target=generate_response, args=(llm_results,))
+        response_process.start()
+        response_process.join(timeout=30)  # Wait for 30 seconds
+
+        if response_process.is_alive():
+            response_process.terminate()  # Terminate the process if it exceeds the time limit
+            response_text = "Sorry, the generation took too long. Please try again later."
+            response_tools = []
+        else:
+            response_text = llm_results['response_text']
+            response_tools = llm_results['response_tools']
+
+        if response_tools:
+            for tool in response_tools:
+                if tool['function']['name'] == 'respond_to_user':
+                    tool_response = await self.null_tool_call()
+                    self.chat_history.append({
+                        'role': 'tool',
+                        'content': f"Null tool call was used."
+                    })
+                if tool['function']['name'] == 'search_internet':
+                    query = tool['function']['arguments']['query']
+                    try:
+                        tool_response = await self.search_internet(query)
+                        self.chat_history.append({
+                            'role': 'tool',
+                            'content': f"Tool {tool['function']['name']} returned {len(tool_response)} results. Results: {tool_response}"
+                        })
+                    except Exception as e:
+                        print(f"Error searching internet: {e}")
+                        self.chat_history.append({
+                            'role': 'tool',
+                            'content': f"Tool {tool['function']['name']} returned an error: {e}"
+                        })
+                if tool['function']['name'] == 'get_current_time':
+                    try:
+                        tool_response = await self.get_current_time()
+                        self.chat_history.append({
+                            'role': 'tool',
+                            'content': f"Tool {tool['function']['name']} returned {tool_response}"
+                        })
+                    except Exception as e:
+                        print(f"Error getting current time: {e}")
+                        self.chat_history.append({
+                            'role': 'tool',
+                            'content': f"Tool {tool['function']['name']} returned an error: {e}"
+                        })
+            response_text, _ = await self._get_llm_response(llm_results)
+
+        if len(response_text) == 0:
+            response_text = 'There was an error processing your request. Please try again later.'
+
+        response_text = re.sub(rf"^{re.escape(self.bot_name)}:", "", response_text, flags=re.MULTILINE)
+        
         # Send response to chat
         await self.chat.send_message(self.channel_name, response_text)
         
         # Add bot's response to chat history
         self.chat_history.append({
             'role': 'assistant',
-            'content': f"{datetime.now().isoformat()} {response_text}"
+            'content': f"{self.bot_name}: {response_text}"
         })
         
         # Keep history within size limit after adding response
@@ -192,13 +338,7 @@ class Bot:
     async def on_sub(self, sub: ChatSub):
         """Called when someone subscribes to the channel."""
         print(f"{sub.user.name} just subscribed!")
-
-    async def test_command(self, cmd: ChatCommand):
-        """Test command handler."""
-        if len(cmd.parameter) == 0:
-            await cmd.reply('You did not give me a parameter!')
-        else:
-            await cmd.reply(f'{cmd.user.name} said: {cmd.parameter}')
+        await self.chat.send_message(self.channel_name, f"Thanks for subscribing, {sub.user.name}!")
 
     async def setup_eventsub(self):
         """Set up EventSub for stream updates."""
@@ -246,9 +386,12 @@ class Bot:
         input("Press Enter when you're ready to proceed with authentication...")
         
         # Create authenticator with all required scopes
-        auth = UserAuthenticator(self.twitch, self.user_scope, force_verify=True)
-        token, refresh_token = await auth.authenticate()
-        await self.twitch.set_user_authentication(token, self.user_scope, refresh_token)
+        try:
+            auth = UserAuthenticator(self.twitch, self.user_scope, force_verify=True)
+            token, refresh_token = await auth.authenticate()
+            await self.twitch.set_user_authentication(token, self.user_scope, refresh_token)
+        except Exception as e:
+            print(f"Error authenticating with Twitch: {e}")
 
         # Set up EventSub for game detection
         await self.setup_eventsub()
@@ -260,7 +403,6 @@ class Bot:
         self.chat.register_event(ChatEvent.READY, self.on_ready)
         self.chat.register_event(ChatEvent.MESSAGE, self.on_message)
         self.chat.register_event(ChatEvent.SUB, self.on_sub)
-        self.chat.register_command('test', self.test_command)
         
         # Start chat
         self.chat.start()

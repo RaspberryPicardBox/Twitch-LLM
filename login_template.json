@@ -2,5 +2,6 @@
     "app_id": "your_twitch_app_id_here",
     "app_secret": "your_twitch_app_secret_here",
     "channel_name": "your_channel_name_here",
-    "streamer_name": "streamer_name_here"  // Optional, defaults to channel_name if not specified
+    "streamer_name": "streamer_name_here (leave blank for channel name)",
+    "bot_name": "SLM_Bot"
 }

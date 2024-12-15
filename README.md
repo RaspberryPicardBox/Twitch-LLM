@@ -57,7 +57,7 @@ pip install -r requirements.txt
 1. Install Ollama following the instructions at [Ollama's website](https://ollama.ai)
 2. Pull the required model:
 ```bash
-ollama pull llama3.2:3b
+ollama pull llama3.2:3b-instruct-q4_0
 ```
 
 ## Running the Bot
@@ -142,6 +142,25 @@ Chat history features:
 - Previous history is loaded on startup if the file exists
 - Directory structure is created automatically
 
+## Available Tools
+
+The Twitch Chat Bot includes several tools that it calls upon automatically to enhance interaction and functionality:
+
+1. **respond_to_user**: 
+   - **Description**: Skips the tool call and sends a message to the user.
+   - **Parameters**: None required.
+
+2. **search_internet**: 
+   - **Description**: Searches the internet using DuckDuckGo and returns up to 3 results. This tool is used only when a chat user asks for an internet search.
+   - **Parameters**:
+     - `query` (string): The query to search for.
+
+3. **get_current_time**: 
+   - **Description**: Retrieves the current time in ISO format.
+   - **Parameters**: None required.
+
+These tools enable the bot to interact effectively with users and provide relevant information as needed.
+
 ## Development
 
 For information about developing, testing, and contributing to the bot, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
@@ -221,6 +240,7 @@ Feel free to submit issues and pull requests!
 
 - [ ] Add logging for better error handling
 - [ ] Add exception handling for Ollama errors
+- [ ] Add more cool commands and functionality
 
 ## License
 
