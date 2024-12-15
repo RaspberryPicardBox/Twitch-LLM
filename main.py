@@ -3,7 +3,7 @@ from twitchAPI.twitch import Twitch
 from twitchAPI.chat import Chat, EventData, ChatMessage, ChatSub, ChatCommand, ChatEvent
 from twitchAPI.helper import first
 from twitchAPI.type import AuthScope
-from twitchAPI.oauth import UserAuthenticator
+from twitchAPI.oauth import UserAuthenticator, refresh_access_token
 from twitchAPI.eventsub.websocket import EventSubWebsocket
 from ollama import AsyncClient
 from duckduckgo_search import AsyncDDGS
@@ -375,23 +375,35 @@ class Bot:
             print(f"Error handling stream update: {e}")
 
     async def run(self):
-        # Initialize the Twitch instance
-        self.twitch = await Twitch(self.app_id, self.app_secret)
-        
-        print("\nIMPORTANT: When the browser opens:")
-        print("1. Make sure you're logged in as your bot account")
-        print("2. If you're logged in as another account, log out first")
-        print("3. The bot will use whatever account authorizes the application\n")
-        
-        input("Press Enter when you're ready to proceed with authentication...")
-        
-        # Create authenticator with all required scopes
-        try:
-            auth = UserAuthenticator(self.twitch, self.user_scope, force_verify=True)
-            token, refresh_token = await auth.authenticate()
-            await self.twitch.set_user_authentication(token, self.user_scope, refresh_token)
-        except Exception as e:
-            print(f"Error authenticating with Twitch: {e}")
+        # Connect to Twitch API
+        self.twitch = Twitch(self.app_id, self.app_secret)
+
+        # Check if we have a refresh token stored
+        refresh_token_file = 'token.json'
+        if os.path.exists(refresh_token_file):
+            with open(refresh_token_file, 'r') as f:
+                token_data = json.load(f)
+                refresh_token = token_data.get('refresh_token')
+                if refresh_token:
+                    try:
+                        token, refresh_token = await refresh_access_token(refresh_token, self.app_id, self.app_secret)
+                        with open(refresh_token_file, 'w') as f:
+                            json.dump({'refresh_token': refresh_token}, f)
+                        await self.twitch.set_user_authentication(token, self.user_scope, refresh_token)
+                    except Exception as e:
+                        print(f"Error refreshing token: {e}")
+                        os.remove(refresh_token_file)
+        else:
+            # Create authenticator with all required scopes
+            try:
+                auth = UserAuthenticator(self.twitch, self.user_scope, force_verify=True)
+                token, refresh_token = await auth.authenticate()
+                # Save token and refresh token to json
+                with open('token.json', 'w') as f:
+                    json.dump({'refresh_token': refresh_token}, f)
+                await self.twitch.set_user_authentication(token, self.user_scope, refresh_token)
+            except Exception as e:
+                print(f"Error authenticating with Twitch: {e}")
 
         # Set up EventSub for game detection
         await self.setup_eventsub()
