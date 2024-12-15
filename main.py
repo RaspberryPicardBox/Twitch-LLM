@@ -1,6 +1,6 @@
 import asyncio
 from twitchAPI.twitch import Twitch
-from twitchAPI.chat import Chat, EventData, ChatMessage, ChatSub, ChatCommand, ChatEvent
+from twitchAPI.chat import Chat, EventData, ChatMessage, ChatCommand, ChatEvent
 from twitchAPI.helper import first
 from twitchAPI.type import AuthScope
 from twitchAPI.oauth import UserAuthenticator, refresh_access_token
@@ -55,17 +55,8 @@ class Bot:
         
         self.user_scope = [
             AuthScope.CHAT_READ,
-            AuthScope.CHAT_EDIT,
-            AuthScope.BITS_READ,
             AuthScope.CHANNEL_BOT,
-            AuthScope.CHANNEL_READ_CHARITY,
-            AuthScope.CHANNEL_READ_GOALS,
-            AuthScope.CHANNEL_READ_HYPE_TRAIN,
-            AuthScope.CHANNEL_READ_POLLS,
-            AuthScope.CHANNEL_READ_PREDICTIONS,
-            AuthScope.CHANNEL_READ_REDEMPTIONS,
             AuthScope.CHANNEL_READ_SUBSCRIPTIONS,
-            AuthScope.CHANNEL_READ_VIPS,
             AuthScope.MODERATOR_READ_FOLLOWERS  # Added for EventSub
         ]
 
@@ -335,11 +326,6 @@ class Bot:
         # Save history after each message if file is specified
         await self.save_history()
 
-    async def on_sub(self, sub: ChatSub):
-        """Called when someone subscribes to the channel."""
-        print(f"{sub.user.name} just subscribed!")
-        await self.chat.send_message(self.channel_name, f"Thanks for subscribing, {sub.user.name}!")
-
     async def setup_eventsub(self):
         """Set up EventSub for stream updates."""
         try:
@@ -414,7 +400,6 @@ class Bot:
         # Register handlers
         self.chat.register_event(ChatEvent.READY, self.on_ready)
         self.chat.register_event(ChatEvent.MESSAGE, self.on_message)
-        self.chat.register_event(ChatEvent.SUB, self.on_sub)
         
         # Start chat
         self.chat.start()
