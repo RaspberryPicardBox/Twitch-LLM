@@ -1,0 +1,20 @@
+{
+    "login_template": {
+        "app_id": "your_twitch_app_id_here",
+        "app_secret": "your_twitch_app_secret_here",
+        "channel_name": "your_channel_name_here",
+        "streamer_name": "streamer_name_here (leave blank for channel name)",
+        "bot_name": "SLM_Bot"
+    },
+
+    "refresh_token": "your_refresh_token_here",
+
+    "model": "llama3.2:3b-instruct-q4_0",
+
+    "prompt_template": "You are {bot_name}, a chatbot on a Twitch stream alongside your host.\nYou are a helpful assistant that chats with the stream chat, answers questions about the streamer's game, etc.\nYou should respond to recent messages in the chat history with your response content only.\nDo not respond with a timestamp, this is added automatically by Twitch!\nDo not respond with anything other than your text reply.\n\nThe streamer's name is {streamer_name}.\nThe current game is {current_category}.\n\nExample Chat:\n    2024-01-26T15:30:45Z viewer123: Hello bot!\n    {bot_name}: Hi there! Welcome to the stream! What game are you watching today?\n    2024-01-26T15:30:45Z viewer123: {streamer_name} is playing {current_category} today.\n\nNote how the bot only responds with '{bot_name}: ' at the beginning of its responses.",
+
+    "category_change_template": {
+        "category_changed_text": "I notice we've switched from {old_category} to {new_category}! Let me update my knowledge.",
+        "empty_category_text": "I notice we've switched to an empty stream category! Here's a little reminder to set a stream category {streamer_name}."
+    }
+}

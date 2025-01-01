@@ -17,17 +17,22 @@ import multiprocessing
 class Bot:
     MAX_HISTORY_SIZE = 100  # Maximum number of messages to keep in history
     
-    def __init__(self, history_file=None, login_file=None, prompt_file=None, model="llama3.2:3b-instruct-q4_0"):
-        if login_file and os.path.exists(login_file):
+    def __init__(self, history_file=None, config_file=None, model="llama3.2:3b-instruct-q4_0"):
+
+        self.config_file = config_file
+
+        if self.config_file and os.path.exists(self.config_file):
             try:
-                with open(login_file, 'r') as f:
-                    login_data = json.load(f)
-                self.app_id = login_data.get('app_id')
-                self.app_secret = login_data.get('app_secret')
-                self.channel_name = login_data.get('channel_name')
-                self.streamer_name = login_data.get('streamer_name', self.channel_name)
-                self.bot_name = login_data.get('bot_name', 'SLM_Bot')
-                print("Loaded credentials from login file")
+                with open(config_file, 'r') as f:
+                    config_data = json.load(f)
+                self.app_id = config_data['login_template'].get('app_id')
+                self.app_secret = config_data['login_template'].get('app_secret')
+                self.channel_name = config_data['login_template'].get('channel_name')
+                self.streamer_name = config_data['login_template'].get('streamer_name', self.channel_name)
+                self.bot_name = config_data['login_template'].get('bot_name', 'SLM_Bot')
+                self.category_change_template = config_data['category_change_template'].get('category_changed_text')
+                self.empty_category_template = config_data['category_change_template'].get('empty_category_text')
+                print("Loaded login credentials from config file")
             except Exception as e:
                 print(f"Error loading login file: {e}")
                 self._prompt_credentials()
@@ -38,7 +43,6 @@ class Bot:
         self.model = model
         self.chat_history = []
         self.history_file = history_file
-        self.prompt_file = prompt_file
 
         # This is updated automatically! Do not set this manually.
         self.current_category = ""
@@ -78,10 +82,10 @@ class Bot:
 
     async def update_system_prompt(self):
         # Load custom prompt from file if specified
-        if self.prompt_file and os.path.exists(self.prompt_file):
+        if self.config_file and os.path.exists(self.config_file):
             try:
-                with open(self.prompt_file, 'r') as f:
-                    template = f.read()
+                with open(self.config_file, 'r') as f:
+                    template = json.load(f).get('prompt_template')
                 template = template.format(
                     bot_name=self.bot_name,
                     streamer_name=self.streamer_name,
@@ -412,14 +416,14 @@ class Bot:
                 new_category = "[No Stream Category]"
                 await self.update_system_prompt()
                 await self.chat.send_message(self.channel_name, 
-                    f"I notice we've switched to an empty stream category! Here's a little reminder to set a stream category {self.streamer_name}.")
+                    self.empty_category_template.format(streamer_name=self.streamer_name))
             if new_category != self.current_category:
                 old_category = self.current_category
                 self.current_category = new_category
                 print(f"Stream category changed from {old_category} to {self.current_category}")
                 await self.update_system_prompt()
                 await self.chat.send_message(self.channel_name, 
-                    f"I notice we've switched from {old_category} to {self.current_category}! Let me update my knowledge.")
+                    self.category_change_template.format(old_category=old_category, new_category=self.current_category))
         except Exception as e:
             print(f"Error handling stream update: {e}")
 
@@ -428,28 +432,31 @@ class Bot:
         self.twitch = Twitch(self.app_id, self.app_secret)
 
         # Check if we have a refresh token stored
-        refresh_token_file = 'token.json'
-        if os.path.exists(refresh_token_file):
-            with open(refresh_token_file, 'r') as f:
-                token_data = json.load(f)
-                refresh_token = token_data.get('refresh_token')
-                if refresh_token:
-                    try:
-                        token, refresh_token = await refresh_access_token(refresh_token, self.app_id, self.app_secret)
-                        with open(refresh_token_file, 'w') as f:
-                            json.dump({'refresh_token': refresh_token}, f)
-                        await self.twitch.set_user_authentication(token, self.user_scope, refresh_token)
-                    except Exception as e:
-                        print(f"Error refreshing token: {e}")
-                        os.remove(refresh_token_file)
+        if os.path.exists(self.config_file):
+            with open(self.config_file, 'r') as f:
+                data = json.load(f)
+                refresh_token = data.get('refresh_token')
+                f.close()
+            if refresh_token:
+                try:
+                    token, refresh_token = await refresh_access_token(refresh_token, self.app_id, self.app_secret)
+                    with open(self.config_file, 'w') as f:
+                        data['refresh_token'] = refresh_token
+                        json.dump(data, f)
+                        f.close()
+                    await self.twitch.set_user_authentication(token, self.user_scope, refresh_token)
+                except Exception as e:
+                    print(f"Error refreshing token: {e}")
         else:
             # Create authenticator with all required scopes
             try:
                 auth = UserAuthenticator(self.twitch, self.user_scope, force_verify=True)
                 token, refresh_token = await auth.authenticate()
                 # Save token and refresh token to json
-                with open('token.json', 'w') as f:
-                    json.dump({'refresh_token': refresh_token}, f)
+                with open(self.config_file, 'w') as f:
+                    data = json.load(f)
+                    data['refresh_token'] = refresh_token
+                    json.dump(data, f)
                 await self.twitch.set_user_authentication(token, self.user_scope, refresh_token)
             except Exception as e:
                 print(f"Error authenticating with Twitch: {e}")
@@ -458,7 +465,12 @@ class Bot:
         await self.setup_eventsub()
         
         # Initialize chat
-        self.chat = await Chat(self.twitch)
+        try:
+            self.chat = await Chat(self.twitch)
+        except ValueError as e:
+            print(f"Error initializing chat: {e}")
+            print("It is likely that your Twitch credentials are incorrect. Please check them and try again.")
+            return
         
         # Register handlers
         self.chat.register_event(ChatEvent.READY, self.on_ready)
@@ -483,9 +495,8 @@ class Bot:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Twitch Chat Bot with LLM integration')
-    parser.add_argument('--history', type=str, help='File to save/load chat history (default: none)')
-    parser.add_argument('--login', type=str, help='JSON file containing login credentials')
-    parser.add_argument('--prompt', type=str, help='Text file containing custom system prompt template')
+    parser.add_argument('--history', type=str, default='./chat_logs/history.json', help='File to save/load chat history (default: ./chat_logs/history.json)')
+    parser.add_argument('--configuration', type=str, default='./configuration.json', help='File to load configuration variables from (default: ./configuration.json)')
     parser.add_argument('--model', type=str, default='llama3.2:3b-instruct-q4_0', help='LLM model to use (default: llama3.2:3b-instruct-q4_0)')
     args = parser.parse_args()
     
@@ -493,7 +504,7 @@ if __name__ == "__main__":
     if history_file and not history_file.endswith('.json'):
         history_file = f"{history_file}.json"
     
-    bot = Bot(history_file=history_file, login_file=args.login, prompt_file=args.prompt)
+    bot = Bot(history_file=history_file, config_file=args.configuration, model=args.model)
 
     try:
         asyncio.run(bot.run())

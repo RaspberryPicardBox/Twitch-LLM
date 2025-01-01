@@ -35,3 +35,4 @@ credentials.json
 *_credentials.json
 *history*.json
 *prompt.txt
+*configuration.json
