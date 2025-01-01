@@ -7,16 +7,16 @@ When creating custom system prompts for the bot, you can use these variables to 
 | Variable | Description | Example Value |
 |----------|-------------|---------------|
 | `{streamer_name}` | The name of the streamer | "RaspberryPicardBox" |
-| `{game_playing}` | The current game being played | "Minecraft", "[Stream Offline]", "[Unknown Game]" |
+| `{current_category}` | The current category being streamed | "Just Chatting", "[Stream Offline]", "[Unknown Category]" |
 
 ## Variable States
 
 ### Game States
-The `{game_playing}` variable can have several states:
+The `{current_category}` variable can have several states:
 - Active game name (e.g., "Minecraft", "Just Chatting")
 - "[Stream Offline]" when the stream is not live
-- "[Unknown Game]" if there's an error detecting the game
-- Empty string ("") during initialization
+- "[No Stream Category]" when the stream has no category
+- "[Unknown Category]" if there's an error detecting the game
 
 ## Using Variables in Templates
 
@@ -40,5 +40,5 @@ Please keep your responses friendly and related to the current game when possibl
 4. Use the example chat format to demonstrate desired behavior
 5. Remember that variables are updated automatically when:
    - The bot starts up
-   - The streamer changes games
+   - The streamer changes category
    - The stream goes online/offline

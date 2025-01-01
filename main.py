@@ -1,6 +1,6 @@
 import asyncio
 from twitchAPI.twitch import Twitch
-from twitchAPI.chat import Chat, EventData, ChatMessage, ChatCommand, ChatEvent
+from twitchAPI.chat import Chat, EventData, ChatMessage, ChatEvent
 from twitchAPI.helper import first
 from twitchAPI.type import AuthScope
 from twitchAPI.oauth import UserAuthenticator, refresh_access_token
@@ -17,7 +17,7 @@ import multiprocessing
 class Bot:
     MAX_HISTORY_SIZE = 100  # Maximum number of messages to keep in history
     
-    def __init__(self, history_file=None, login_file=None, prompt_file=None):
+    def __init__(self, history_file=None, login_file=None, prompt_file=None, model="llama3.2:3b-instruct-q4_0"):
         if login_file and os.path.exists(login_file):
             try:
                 with open(login_file, 'r') as f:
@@ -35,12 +35,13 @@ class Bot:
             self._prompt_credentials()
 
         self.llm = AsyncClient()
+        self.model = model
         self.chat_history = []
         self.history_file = history_file
         self.prompt_file = prompt_file
 
         # This is updated automatically! Do not set this manually.
-        self.game_playing = ""
+        self.current_category = ""
         self.prompt = ""
         
         # Load chat history if file specified and exists
@@ -55,6 +56,7 @@ class Bot:
         
         self.user_scope = [
             AuthScope.CHAT_READ,
+            AuthScope.CHAT_EDIT,
             AuthScope.CHANNEL_BOT,
             AuthScope.CHANNEL_READ_SUBSCRIPTIONS,
             AuthScope.MODERATOR_READ_FOLLOWERS  # Added for EventSub
@@ -80,9 +82,15 @@ class Bot:
             try:
                 with open(self.prompt_file, 'r') as f:
                     template = f.read()
+                template = template.format(
+                    bot_name=self.bot_name,
+                    streamer_name=self.streamer_name,
+                    current_category=self.current_category,
+                    chat_history=self.chat_history
+                )
                 self.prompt = template.format(
                     streamer_name=self.streamer_name,
-                    game_playing=self.game_playing
+                    current_category=self.current_category
                 )
                 print("Loaded custom prompt template")
             except Exception as e:
@@ -100,12 +108,12 @@ class Bot:
         Do not respond with anything other than your text reply.
 
         The streamer's name is {self.streamer_name}.
-        The current game is {self.game_playing}. If the stream is offline, feel free to chat still.
+        The current game is {self.current_category}. If the stream is offline, feel free to chat still.
 
         Example Chat:
             viewer123: Hello bot!
             {self.bot_name}: Hi there! Welcome to the stream! What game are you watching today?
-            viewer123: {self.streamer_name} is playing {self.game_playing} today.
+            viewer123: {self.streamer_name} is playing {self.current_category} today.
 
         DO NOT use any tool calls unless necessary. ONLY use tool calls when a user specifically asks. DO NOT search the internet unecessarily.
 
@@ -123,14 +131,14 @@ class Bot:
             try:
                 stream = await first(self.twitch.get_streams(user_login=self.streamer_name))
                 if stream:
-                    self.game_playing = stream.game_name
-                    print(f"Detected game: {self.game_playing}")
+                    self.current_category = stream.game_name
+                    print(f"Detected game: {self.current_category}")
                 else:
-                    self.game_playing = "[Stream Offline]"
+                    self.current_category = "[Stream Offline]"
                     print("Stream appears to be offline")
             except Exception as e:
-                self.game_playing = "[Unknown Game]"
-                print(f"Could not detect current game: {e}")
+                self.current_category = "[Unknown Category]"
+                print(f"Could not detect current category: {e}")
 
             # Update system prompt with new game information
             await self.update_system_prompt()
@@ -208,7 +216,7 @@ class Bot:
         # Get response from LLM
         try:
             response = await self.llm.chat(
-                model='llama3.2:3b-instruct-q4_0', 
+                model=self.model, 
                 messages=[{'role': 'system', 'content': self.prompt}] + self.chat_history,
                 tools = self._get_available_tools(),
                 options={
@@ -229,6 +237,43 @@ class Bot:
         llm_results['response_tools'] = response_tools
         return response_text, response_tools
 
+    async def check_message(self, msg: str):
+        """Checks the LLM generated message content with another LLM to:
+        1. Ensure the message is not harmful or illegal,
+        2. Make sure the message is actually a message, and not JSON,
+        3. Check that no other errors are present. """
+
+        check_prompt = f"""
+        You are a message-checking system for an AI chatbot.
+        Your purpose is to ensure that the messages the chatbot sends are not harmful, illegal, or offensive.
+        You also ensure that the message is actually a text message, and not random JSON tool calls.
+        Remember, the message is a chatbot message, so the only content should be a normal text message.
+
+        If the message is OK to send, respond with {{ "accepted": true }}. Otherwise, respond with {{ "accepted": false }}.
+        Respond only with valid JSON.
+        """
+
+        try:
+            response = await self.llm.chat(
+                model=self.model, 
+                messages=[{'role': 'system', 'content': check_prompt}, {'role': 'user', 'content': msg}],
+                options={
+                    'temperature': 0.2
+                }
+            )
+            response_text = response['message']['content']
+            print(f"Checked message: {response_text}")
+        except Exception as e:
+            print(f"Error checking message: {e}")
+            return False
+
+        try:
+            response = json.loads(response_text)
+            return response['accepted']
+        except Exception as e:
+            print(f"Error checking message: {e}")
+            return False
+
     async def on_message(self, msg: ChatMessage):
         """Called when a message is received in chat."""
 
@@ -236,6 +281,8 @@ class Bot:
             return
 
         msg.text = msg.text[4:].strip()
+
+        print(f"Received message from {msg.user.name}: {msg.text}")
 
         # Add user message to chat history
         self.chat_history.append({
@@ -267,6 +314,9 @@ class Bot:
         else:
             response_text = llm_results['response_text']
             response_tools = llm_results['response_tools']
+
+        print(f"Generated response: {response_text}")
+        print(f"Generated tools: {response_tools}")
 
         if response_tools:
             for tool in response_tools:
@@ -309,6 +359,13 @@ class Bot:
             response_text = 'There was an error processing your request. Please try again later.'
 
         response_text = re.sub(rf"^{re.escape(self.bot_name)}:", "", response_text, flags=re.MULTILINE)
+
+        print(f"Sending response: {response_text}")
+
+        # Check if message is OK to send
+        if not await self.check_message(response_text):
+            response_text = 'There was an error processing your request. Please try again later.'
+            response_tools = []
         
         # Send response to chat
         await self.chat.send_message(self.channel_name, response_text)
@@ -338,7 +395,7 @@ class Bot:
             self.eventsub.start()
             
             # Subscribe to channel update events
-            await self.eventsub.listen_channel_update(
+            await self.eventsub.listen_channel_update_v2(
                 broadcaster_user_id=self.user_id,
                 callback=self.on_stream_update
             )
@@ -349,14 +406,20 @@ class Bot:
     async def on_stream_update(self, data):
         """Called when the stream information updates."""
         try:
-            new_game = data.category_name
-            if new_game != self.game_playing:
-                old_game = self.game_playing or "[No Game]"
-                self.game_playing = new_game
-                print(f"Game changed from {old_game} to {self.game_playing}")
+            new_category = data.event.category_name
+            if new_category == None or len(new_category) == 0:
+                print("Stream category changed to nothing.")
+                new_category = "[No Stream Category]"
                 await self.update_system_prompt()
                 await self.chat.send_message(self.channel_name, 
-                    f"I notice we've switched from {old_game} to {self.game_playing}! Let me update my knowledge.")
+                    f"I notice we've switched to an empty stream category! Here's a little reminder to set a stream category {self.streamer_name}.")
+            if new_category != self.current_category:
+                old_category = self.current_category
+                self.current_category = new_category
+                print(f"Stream category changed from {old_category} to {self.current_category}")
+                await self.update_system_prompt()
+                await self.chat.send_message(self.channel_name, 
+                    f"I notice we've switched from {old_category} to {self.current_category}! Let me update my knowledge.")
         except Exception as e:
             print(f"Error handling stream update: {e}")
 
@@ -423,6 +486,7 @@ if __name__ == "__main__":
     parser.add_argument('--history', type=str, help='File to save/load chat history (default: none)')
     parser.add_argument('--login', type=str, help='JSON file containing login credentials')
     parser.add_argument('--prompt', type=str, help='Text file containing custom system prompt template')
+    parser.add_argument('--model', type=str, default='llama3.2:3b-instruct-q4_0', help='LLM model to use (default: llama3.2:3b-instruct-q4_0)')
     args = parser.parse_args()
     
     history_file = args.history
@@ -430,6 +494,7 @@ if __name__ == "__main__":
         history_file = f"{history_file}.json"
     
     bot = Bot(history_file=history_file, login_file=args.login, prompt_file=args.prompt)
+
     try:
         asyncio.run(bot.run())
     except KeyboardInterrupt:

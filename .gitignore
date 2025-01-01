@@ -24,13 +24,14 @@ Thumbs.db
 
 # Application specific
 *.log
-token.json
+*token.json
 config.json
 .env
 *.token
 *.secret
-login.json
+*login.json
 *_login.json
 credentials.json
 *_credentials.json
 *history*.json
+*prompt.txt
