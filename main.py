@@ -415,15 +415,19 @@ class Bot:
                 print("Stream category changed to nothing.")
                 new_category = "[No Stream Category]"
                 await self.update_system_prompt()
-                await self.chat.send_message(self.channel_name, 
-                    self.empty_category_template.format(streamer_name=self.streamer_name))
+                category_empty_message = self.empty_category_template.format(streamer_name=self.streamer_name)
+                if category_empty_message and len(category_empty_message) > 0:
+                    await self.chat.send_message(self.channel_name, 
+                        category_empty_message)
             if new_category != self.current_category:
                 old_category = self.current_category
                 self.current_category = new_category
                 print(f"Stream category changed from {old_category} to {self.current_category}")
                 await self.update_system_prompt()
-                await self.chat.send_message(self.channel_name, 
-                    self.category_change_template.format(old_category=old_category, new_category=self.current_category))
+                category_change_message = self.category_change_template.format(old_category=old_category, new_category=self.current_category)
+                if category_change_message and len(category_change_message) > 0:
+                    await self.chat.send_message(self.channel_name, 
+                        category_change_message)
         except Exception as e:
             print(f"Error handling stream update: {e}")
 
